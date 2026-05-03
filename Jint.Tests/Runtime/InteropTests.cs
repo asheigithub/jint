@@ -547,6 +547,340 @@ public partial class InteropTests : IDisposable
             ");
     }
 
+    public class DictionaryKeyModel
+    {
+        public string Value { get; set; } = "test";
+    }
+
+    public class DictionaryKeyDerivedModel : DictionaryKeyModel
+    {
+    }
+
+    public enum DictionaryKeyEnum
+    {
+        Foo,
+        Bar,
+    }
+
+    [Fact]
+    public void CanGetIndexUsingObjectKey()
+    {
+        // repro from https://github.com/sebastienros/jint/issues/2441
+        var model = new DictionaryKeyModel();
+        var dictionary = new Dictionary<DictionaryKeyModel, string>
+        {
+            [model] = "value1",
+        };
+        _engine.SetValue("obj", dictionary);
+        _engine.SetValue("model", model);
+
+        var result = _engine.Evaluate("'' + obj[model]");
+        Assert.Equal("value1", result.AsString());
+    }
+
+    [Fact]
+    public void CanSetIndexUsingObjectKey()
+    {
+        var model = new DictionaryKeyModel();
+        var dictionary = new Dictionary<DictionaryKeyModel, string>
+        {
+            [model] = "value1",
+        };
+        _engine.SetValue("obj", dictionary);
+        _engine.SetValue("model", model);
+
+        _engine.Execute("obj[model] = 'updated';");
+        Assert.Equal("updated", dictionary[model]);
+    }
+
+    [Fact]
+    public void ObjectKeyDictionary_MissingKeyReturnsUndefined()
+    {
+        var model = new DictionaryKeyModel();
+        var other = new DictionaryKeyModel();
+        var dictionary = new Dictionary<DictionaryKeyModel, string>
+        {
+            [model] = "value1",
+        };
+        _engine.SetValue("obj", dictionary);
+        _engine.SetValue("present", model);
+        _engine.SetValue("absent", other);
+
+        Assert.Equal("value1", _engine.Evaluate("obj[present]").AsString());
+        Assert.True(_engine.Evaluate("obj[absent] === undefined").AsBoolean());
+    }
+
+    [Fact]
+    public void ObjectKeyDictionary_HasReturnsTrueForPresentKey()
+    {
+        var present = new DictionaryKeyModel();
+        var absent = new DictionaryKeyModel();
+        var dictionary = new Dictionary<DictionaryKeyModel, string>
+        {
+            [present] = "value1",
+        };
+        _engine.SetValue("obj", dictionary);
+        _engine.SetValue("present", present);
+        _engine.SetValue("absent", absent);
+
+        Assert.True(_engine.Evaluate("present in obj").AsBoolean());
+        Assert.False(_engine.Evaluate("absent in obj").AsBoolean());
+    }
+
+    [Fact]
+    public void ObjectKeyDictionary_DeleteRemovesEntry()
+    {
+        var model = new DictionaryKeyModel();
+        var dictionary = new Dictionary<DictionaryKeyModel, string>
+        {
+            [model] = "value1",
+        };
+        _engine.SetValue("obj", dictionary);
+        _engine.SetValue("model", model);
+
+        _engine.Execute("delete obj[model];");
+        Assert.False(dictionary.ContainsKey(model));
+    }
+
+    [Fact]
+    public void ReadOnlyDictionary_WithObjectKey_AllowsRead()
+    {
+        var model = new DictionaryKeyModel();
+        var dictionary = new Dictionary<DictionaryKeyModel, string>
+        {
+            [model] = "value1",
+        };
+        IReadOnlyDictionary<DictionaryKeyModel, string> readOnly = dictionary;
+        _engine.SetValue("obj", readOnly);
+        _engine.SetValue("model", model);
+
+        Assert.Equal("value1", _engine.Evaluate("'' + obj[model]").AsString());
+    }
+
+    [Fact]
+    public void ReadOnlyDictionary_WithObjectKey_HasReturnsTrueForPresentKey()
+    {
+        var present = new DictionaryKeyModel();
+        var absent = new DictionaryKeyModel();
+        IReadOnlyDictionary<DictionaryKeyModel, string> readOnly = new Dictionary<DictionaryKeyModel, string>
+        {
+            [present] = "value1",
+        };
+        _engine.SetValue("obj", readOnly);
+        _engine.SetValue("present", present);
+        _engine.SetValue("absent", absent);
+
+        Assert.True(_engine.Evaluate("present in obj").AsBoolean());
+        Assert.False(_engine.Evaluate("absent in obj").AsBoolean());
+    }
+
+    [Fact]
+    public void ObjectKeyDictionary_DerivedKeyTypeWorks()
+    {
+        var derived = new DictionaryKeyDerivedModel();
+        var dictionary = new Dictionary<DictionaryKeyModel, string>
+        {
+            [derived] = "fromDerived",
+        };
+        _engine.SetValue("obj", dictionary);
+        _engine.SetValue("model", derived);
+
+        Assert.Equal("fromDerived", _engine.Evaluate("'' + obj[model]").AsString());
+    }
+
+    [Fact]
+    public void ObjectKeyDictionary_StructKey()
+    {
+        var key = Guid.NewGuid();
+        var dictionary = new Dictionary<Guid, string>
+        {
+            [key] = "valueForGuid",
+        };
+        _engine.SetValue("obj", dictionary);
+        _engine.SetValue("key", key);
+
+        Assert.Equal("valueForGuid", _engine.Evaluate("'' + obj[key]").AsString());
+    }
+
+    [Fact]
+    public void ObjectKeyDictionary_SetWithIncompatibleValueType_SloppyMode_NoOp()
+    {
+        var model = new DictionaryKeyModel();
+        var dictionary = new Dictionary<DictionaryKeyModel, int>
+        {
+            [model] = 42,
+        };
+        _engine.SetValue("obj", dictionary);
+        _engine.SetValue("model", model);
+
+        // assigning a non-numeric string to an int-valued dictionary must not throw and must not corrupt the entry
+        _engine.Execute("obj[model] = 'not an int';");
+        Assert.Equal(42, dictionary[model]);
+    }
+
+    [Fact]
+    public void ObjectKeyDictionary_EnumKey()
+    {
+        var dictionary = new Dictionary<DictionaryKeyEnum, string>
+        {
+            [DictionaryKeyEnum.Foo] = "fooValue",
+            [DictionaryKeyEnum.Bar] = "barValue",
+        };
+        _engine.SetValue("obj", dictionary);
+        _engine.SetValue("foo", DictionaryKeyEnum.Foo);
+        _engine.SetValue("bar", DictionaryKeyEnum.Bar);
+
+        Assert.Equal("fooValue", _engine.Evaluate("'' + obj[foo]").AsString());
+        Assert.Equal("barValue", _engine.Evaluate("'' + obj[bar]").AsString());
+    }
+
+    [Fact]
+    public void ObjectKeyDictionary_IntegerKeyReturnsUndefined()
+    {
+        // a JS number key against an object-keyed dictionary should return undefined cleanly,
+        // not throw, and not match by coincidence
+        var model = new DictionaryKeyModel();
+        var dictionary = new Dictionary<DictionaryKeyModel, string>
+        {
+            [model] = "value1",
+        };
+        _engine.SetValue("obj", dictionary);
+
+        Assert.True(_engine.Evaluate("obj[42] === undefined").AsBoolean());
+    }
+
+    [Fact]
+    public void IntegerKeyedDictionary_ResolvesByNumericKey()
+    {
+        // Dictionary<int, T> went through the IsStringKeyedGenericDictionary path before this
+        // change (which stringified the int and likely failed); now it routes through the
+        // non-string-keyed path and resolves directly via the int key.
+        var dictionary = new Dictionary<int, string>
+        {
+            [1] = "one",
+            [2] = "two",
+        };
+        _engine.SetValue("obj", dictionary);
+
+        Assert.Equal("one", _engine.Evaluate("'' + obj[1]").AsString());
+        Assert.Equal("two", _engine.Evaluate("'' + obj[2]").AsString());
+        Assert.True(_engine.Evaluate("obj[3] === undefined").AsBoolean());
+        Assert.True(_engine.Evaluate("1 in obj").AsBoolean());
+        Assert.False(_engine.Evaluate("3 in obj").AsBoolean());
+
+        _engine.Execute("obj[3] = 'three';");
+        Assert.Equal("three", dictionary[3]);
+
+        _engine.Execute("delete obj[1];");
+        Assert.False(dictionary.ContainsKey(1));
+    }
+
+    [Fact]
+    public void ObjectKeyDictionary_SymbolKeyHandledByBase()
+    {
+        // symbol keys must not be hijacked by the new non-string-keyed dict branches —
+        // Symbol.iterator should still resolve to the iterator function (Dictionary<,> is enumerable)
+        var model = new DictionaryKeyModel();
+        var dictionary = new Dictionary<DictionaryKeyModel, string>
+        {
+            [model] = "value1",
+        };
+        _engine.SetValue("obj", dictionary);
+
+        Assert.Equal("function", _engine.Evaluate("typeof obj[Symbol.iterator]").AsString());
+    }
+
+    [Fact]
+    public void ObjectKeyDictionary_NullKeyReturnsUndefined()
+    {
+        // null/undefined JS keys must short-circuit cleanly, not crash with ArgumentNullException
+        // when reflectively invoking Dictionary<TKey, TValue>.TryGetValue/ContainsKey/Remove.
+        var dictionary = new Dictionary<DictionaryKeyModel, string>
+        {
+            [new DictionaryKeyModel()] = "value1",
+        };
+        _engine.SetValue("obj", dictionary);
+
+        Assert.True(_engine.Evaluate("obj[null] === undefined").AsBoolean());
+        Assert.True(_engine.Evaluate("obj[undefined] === undefined").AsBoolean());
+        Assert.False(_engine.Evaluate("null in obj").AsBoolean());
+        Assert.False(_engine.Evaluate("delete obj[null]; null in obj").AsBoolean());
+    }
+
+    [Fact]
+    public void ObjectKeyDictionary_NullKeyAssignment_SloppyMode_NoOp()
+    {
+        // mirror of the read-side null guard: assigning to obj[null] must not crash with
+        // ArgumentNullException when reflectively invoking the indexer setter, and must not
+        // pollute the dictionary with a null key.
+        var dictionary = new Dictionary<DictionaryKeyModel, string>
+        {
+            [new DictionaryKeyModel()] = "value1",
+        };
+        _engine.SetValue("obj", dictionary);
+
+        _engine.Execute("obj[null] = 'should not stick';");
+        Assert.Single(dictionary);
+        Assert.DoesNotContain("should not stick", dictionary.Values);
+    }
+
+    [Fact]
+    public void ObjectKeyDictionary_ObjectValuedDictionary_StoresUnwrappedClrValue()
+    {
+        // Dictionary<TKey, object> must receive the unwrapped CLR value, not the raw JsValue —
+        // otherwise C# callers reading the dictionary back get JsString/JsNumber surprises.
+        var model = new DictionaryKeyModel();
+        var dictionary = new Dictionary<DictionaryKeyModel, object>();
+        _engine.SetValue("obj", dictionary);
+        _engine.SetValue("model", model);
+
+        _engine.Execute("obj[model] = 'hello';");
+        Assert.Equal("hello", dictionary[model]);
+        Assert.IsType<string>(dictionary[model]);
+    }
+
+    [Fact]
+    public void ObjectKeyDictionary_SetWithIncompatibleValueType_StrictMode_Throws()
+    {
+        // strict mode must escalate the [[Set]] failure to a TypeError
+        var model = new DictionaryKeyModel();
+        var dictionary = new Dictionary<DictionaryKeyModel, int>
+        {
+            [model] = 42,
+        };
+        _engine.SetValue("obj", dictionary);
+        _engine.SetValue("model", model);
+
+        var ex = Assert.Throws<JavaScriptException>(() => _engine.Execute("'use strict'; obj[model] = 'not an int';"));
+        Assert.Contains("Cannot assign", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(42, dictionary[model]);
+    }
+
+    [Fact]
+    public void ObjectKeyDictionary_FrozenWrapper_BlocksWrites()
+    {
+        // Object.freeze on the wrapper sets Extensible=false, which the [[Set]] path treats as
+        // a blanket write block (matching the existing string-keyed dict behavior). Lock in the
+        // contract so a future change to relax this is a deliberate decision, not a regression.
+        var model = new DictionaryKeyModel();
+        var dictionary = new Dictionary<DictionaryKeyModel, string>
+        {
+            [model] = "value1",
+        };
+        _engine.SetValue("obj", dictionary);
+        _engine.SetValue("model", model);
+
+        _engine.Execute("Object.freeze(obj);");
+
+        // sloppy mode: silent failure, value unchanged
+        _engine.Execute("obj[model] = 'updated';");
+        Assert.Equal("value1", dictionary[model]);
+
+        // strict mode: TypeError, value unchanged
+        Assert.Throws<JavaScriptException>(() => _engine.Execute("'use strict'; obj[model] = 'updated';"));
+        Assert.Equal("value1", dictionary[model]);
+    }
+
     [Fact]
     public void CanUseIndexOnCollection()
     {
