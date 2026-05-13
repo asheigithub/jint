@@ -446,16 +446,30 @@ internal sealed partial class NumberPrototype : NumberInstance
             return ToNumberString(x);
         }
 
-        var integer = (long) x;
-        var fraction = x - integer;
-
-        string result = NumberPrototype.ToBase(integer, radix);
-        if (fraction != 0)
-        {
-            result += "." + NumberPrototype.ToFractionBase(fraction, radix);
-        }
-
-        return result;
+         var integer = System.Math.Truncate(x);
+         var fraction = x - integer;
+        
+         if (integer > long.MaxValue)
+         {
+             int k = 0;
+             while (integer > long.MaxValue)
+             {
+                 integer = integer / radix;
+                 k++;
+             }
+        
+             return NumberPrototype.ToBase((long) integer, radix) + "".PadRight(k, '0');
+         }
+         else
+         {
+             string result = NumberPrototype.ToBase((long) integer, radix);
+             if (fraction != 0)
+             {
+                 result += "." + NumberPrototype.ToFractionBase(fraction, radix);
+             }
+        
+             return result;
+         }
     }
 
     internal static string ToBase(long n, int radix)
