@@ -81,6 +81,72 @@ internal sealed class ForLoopSuspendData : SuspendData
     /// The saved values of loop variables (let bindings in for loop init).
     /// </summary>
     public Dictionary<Key, JsValue>? BoundValues { get; set; }
+
+    /// <summary>
+    /// The accumulated completion value from previous iterations.
+    /// </summary>
+    public JsValue AccumulatedValue { get; set; } = JsValue.Undefined;
+}
+
+internal sealed class SwitchBlockSuspendData : SuspendData
+{
+    public JsValue Input { get; set; } = JsValue.Undefined;
+
+    public int DefaultCaseIndex { get; set; } = -1;
+
+    public JsValue AccumulatedValue { get; set; } = JsValue.Undefined;
+
+    public DeclarativeEnvironment? BlockEnvironment { get; set; }
+
+    public Environments.Environment? OuterEnvironment { get; set; }
+}
+
+/// <summary>
+/// Stores the already-evaluated left operand of a binary, logical, or conditional
+/// expression when evaluation suspends inside the right operand / branch. Reused
+/// on resume so the left side (which may have observable side effects) is not
+/// re-evaluated.
+/// </summary>
+internal sealed class LeftOperandSuspendData : SuspendData
+{
+    public JsValue LeftValue { get; set; } = JsValue.Undefined;
+}
+
+/// <summary>
+/// Stores the outer lexical environment for a catch clause when execution suspends
+/// inside the catch body.
+/// </summary>
+internal sealed class CatchSuspendData : SuspendData
+{
+    public DeclarativeEnvironment? CatchEnvironment { get; set; }
+
+    public Environments.Environment? OuterEnvironment { get; set; }
+}
+
+/// <summary>
+/// Stores the resolved LHS Reference and pre-mutation value of a compound assignment
+/// (e.g. obj[++i] += await y) when evaluation suspends inside the right-hand side.
+/// Reused on resume so the LHS — which may have observable side effects in its index
+/// or property accessor — is not re-evaluated.
+/// </summary>
+internal sealed class AssignmentSuspendData : SuspendData
+{
+    public Reference Lref { get; set; } = null!;
+
+    public JsValue OriginalLeftValue { get; set; } = JsValue.Undefined;
+}
+
+/// <summary>
+/// Stores the in-progress argument buffer and resume index for a call/new
+/// expression when evaluation suspends inside one of the arguments. Reused on
+/// resume so already-evaluated arguments (which may have observable side
+/// effects) are not re-evaluated.
+/// </summary>
+internal sealed class CallArgumentsSuspendData : SuspendData
+{
+    public JsValue[] Buffer { get; set; } = [];
+
+    public int NextIndex { get; set; }
 }
 
 /// <summary>
