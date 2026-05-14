@@ -469,6 +469,226 @@ public class AsyncTests
     }
 
     [Fact]
+    public void ShouldNotReevaluateArrayLiteralElementsBeforeAwait()
+    {
+        var result = EvaluateAsyncJson("""
+            let i = 0;
+            const a = [++i, ++i, await Promise.resolve(++i)];
+            return { a, i };
+            """);
+
+        Assert.Equal("""{"a":[1,2,3],"i":3}""", result);
+    }
+
+    [Fact]
+    public void ShouldNotReevaluateArrayLiteralAcrossMultipleAwaits()
+    {
+        var result = EvaluateAsyncJson("""
+            let i = 0;
+            const a = [++i, await Promise.resolve(++i), ++i, await Promise.resolve(++i)];
+            return { a, i };
+            """);
+
+        Assert.Equal("""{"a":[1,2,3,4],"i":4}""", result);
+    }
+
+    [Fact]
+    public void ShouldClearArrayLiteralSuspendDataBetweenCalls()
+    {
+        var result = EvaluateAsyncJson("""
+            let i = 0;
+            const first = [++i, await Promise.resolve(10)];
+            const second = [++i, await Promise.resolve(20)];
+            return { first, second, i };
+            """);
+
+        Assert.Equal("""{"first":[1,10],"second":[2,20],"i":2}""", result);
+    }
+
+    [Fact]
+    public void ShouldNotReiterateOneShotSpreadIteratorAcrossAwaitInArrayLiteral()
+    {
+        // A custom iterator stored in `g` is drained on first pass. Without
+        // preservation, the spread re-iterates `g` on resume and gets nothing.
+        var result = EvaluateAsyncJson("""
+            function* gen() { yield "a"; yield "b"; yield "c"; }
+            const g = gen();
+            const r = [...g, await Promise.resolve("d")];
+            return { r };
+            """);
+
+        Assert.Equal("""{"r":["a","b","c","d"]}""", result);
+    }
+
+    [Fact]
+    public void ShouldNotReiterateOneShotSpreadIteratorAcrossAwaitInCallArguments()
+    {
+        var result = EvaluateAsyncJson("""
+            function* gen() { yield 1; yield 2; yield 3; }
+            const g = gen();
+            const sum = (...vals) => vals.reduce((a, b) => a + b, 0);
+            const total = sum(...g, await Promise.resolve(10));
+            return { total };
+            """);
+
+        Assert.Equal("""{"total":16}""", result);
+    }
+
+    [Fact]
+    public void ShouldPreserveTargetAcrossMultipleSuspensionsInSpreadArguments()
+    {
+        var result = EvaluateAsyncJson("""
+            function* gen() { yield "x"; yield "y"; }
+            const g = gen();
+            const a = [
+                await Promise.resolve("start"),
+                ...g,
+                await Promise.resolve("end")
+            ];
+            return { a };
+            """);
+
+        Assert.Equal("""{"a":["start","x","y","end"]}""", result);
+    }
+
+    [Fact]
+    public void ShouldNotEvaluateLaterArgumentsAfterSuspensionInSpread()
+    {
+        // Without the IsSuspended-check-before-Add fix, `++j` would run during
+        // the suspended pass after the await sentinel is appended.
+        var result = EvaluateAsyncJson("""
+            let j = 0;
+            const arr = [1];
+            const r = [...arr, await Promise.resolve("mid"), ++j];
+            return { r, j };
+            """);
+
+        Assert.Equal("""{"r":[1,"mid",1],"j":1}""", result);
+    }
+
+    [Fact]
+    public void ShouldNotReevaluateNullishCoalescingLeftOperandAfterAwait()
+    {
+        var result = EvaluateAsyncJson("""
+            let d = 0;
+            const getNullish = () => (++d, null);
+            const v = getNullish() ?? (await Promise.resolve("filled"));
+            return { d, v };
+            """);
+
+        Assert.Equal("""{"d":1,"v":"filled"}""", result);
+    }
+
+    [Fact]
+    public void ShouldNotReevaluateMemberExpressionObjectAcrossPropertyAwait()
+    {
+        var result = EvaluateAsyncJson("""
+            let calls = 0;
+            const obj = { val: 1 };
+            const get = () => (calls++, obj);
+            const v = get()[await Promise.resolve("val")];
+            return { v, calls };
+            """);
+
+        Assert.Equal("""{"v":1,"calls":1}""", result);
+    }
+
+    [Fact]
+    public void ShouldNotReevaluateMemberExpressionObjectAcrossAwaitInChain()
+    {
+        var result = EvaluateAsyncJson("""
+            let calls = 0;
+            const obj = { foo: { bar: 42 } };
+            const get = () => (calls++, obj);
+            const v = get().foo[await Promise.resolve("bar")];
+            return { v, calls };
+            """);
+
+        Assert.Equal("""{"v":42,"calls":1}""", result);
+    }
+
+    [Fact]
+    public void ShouldNotReevaluateObjectLiteralPropertiesBeforeAwait()
+    {
+        var result = EvaluateAsyncJson("""
+            let i = 0;
+            const o = { a: ++i, b: ++i, c: await Promise.resolve(++i) };
+            return { o, i };
+            """);
+
+        Assert.Equal("""{"o":{"a":1,"b":2,"c":3},"i":3}""", result);
+    }
+
+    [Fact]
+    public void ShouldNotReevaluateObjectLiteralPropertiesAcrossMultipleAwaits()
+    {
+        var result = EvaluateAsyncJson("""
+            let i = 0;
+            const o = {
+                a: ++i,
+                b: await Promise.resolve(++i),
+                c: ++i,
+                d: await Promise.resolve(++i)
+            };
+            return { o, i };
+            """);
+
+        Assert.Equal("""{"o":{"a":1,"b":2,"c":3,"d":4},"i":4}""", result);
+    }
+
+    [Fact]
+    public void ShouldNotReevaluateComputedKeyAcrossAwaitInObjectLiteral()
+    {
+        var result = EvaluateAsyncJson("""
+            let i = 0;
+            const k = () => "k" + (++i);
+            const o = { [k()]: 1, value: await Promise.resolve("done") };
+            return { o, i };
+            """);
+
+        Assert.Equal("""{"o":{"k1":1,"value":"done"},"i":1}""", result);
+    }
+
+    [Fact]
+    public void ShouldNotReevaluateTemplateLiteralInterpolationsBeforeAwait()
+    {
+        var result = EvaluateAsyncJson("""
+            let i = 0;
+            const s = `${++i}-${await Promise.resolve("x")}-${++i}`;
+            return { s, i };
+            """);
+
+        Assert.Equal("""{"s":"1-x-2","i":2}""", result);
+    }
+
+    [Fact]
+    public void ShouldNotEvaluateLaterInterpolationsAfterSuspensionInTemplateLiteral()
+    {
+        // Without the IsSuspended-break inside the interpolation loop, `++j` would
+        // also run during the suspended pass, doubling its side effect on resume.
+        var result = EvaluateAsyncJson("""
+            let j = 0;
+            const s = `${await Promise.resolve("mid")}-${++j}`;
+            return { s, j };
+            """);
+
+        Assert.Equal("""{"s":"mid-1","j":1}""", result);
+    }
+
+    [Fact]
+    public void ShouldNotReevaluateTaggedTemplateInterpolationsBeforeAwait()
+    {
+        var result = EvaluateAsyncJson("""
+            let i = 0;
+            const tag = (strings, ...values) => values.join("|");
+            const s = tag`${++i}-${await Promise.resolve("x")}-${++i}`;
+            return { s, i };
+            """);
+
+        Assert.Equal("""{"s":"1|x|2","i":2}""", result);
+    }
+
+    [Fact]
     public void ShouldTaskConvertedToPromiseInJS()
     {
         Engine engine = new();

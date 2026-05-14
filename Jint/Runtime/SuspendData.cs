@@ -137,16 +137,93 @@ internal sealed class AssignmentSuspendData : SuspendData
 }
 
 /// <summary>
-/// Stores the in-progress argument buffer and resume index for a call/new
-/// expression when evaluation suspends inside one of the arguments. Reused on
-/// resume so already-evaluated arguments (which may have observable side
-/// effects) are not re-evaluated.
+/// Stores an in-progress JsValue buffer and the next index to resume at when
+/// evaluation of a sequence of sibling expressions (call/new arguments, array
+/// literal elements) suspends. Reused on resume so already-evaluated entries
+/// — which may have observable side effects — are not re-evaluated.
 /// </summary>
-internal sealed class CallArgumentsSuspendData : SuspendData
+internal sealed class ExpressionBufferSuspendData : SuspendData
 {
     public JsValue[] Buffer { get; set; } = [];
 
     public int NextIndex { get; set; }
+}
+
+/// <summary>
+/// Stores the partial target list and next expression index for an argument
+/// list that contains spread elements (call/new/array-literal). Without
+/// preservation, one-shot iterators (e.g. generators) would be re-iterated
+/// on resume and yield empty — producing the wrong result.
+/// </summary>
+internal sealed class SpreadArgumentsSuspendData : SuspendData
+{
+    public List<JsValue> Target { get; set; } = new();
+
+    public int NextExpressionIndex { get; set; }
+}
+
+/// <summary>
+/// Stores the resolved object-side state of a member expression (e.g.
+/// <c>getObj()[await x]</c>) so that, when the property side suspends, the
+/// object expression — which may have observable side effects — is not
+/// re-evaluated on resume.
+/// </summary>
+internal sealed class MemberExpressionSuspendData : SuspendData
+{
+    public JsValue BaseValue { get; set; } = JsValue.Undefined;
+
+    public object? BaseReferenceName { get; set; }
+
+    public JsValue? ActualThis { get; set; }
+}
+
+/// <summary>
+/// Stores the partially-built object and resume index for an object literal
+/// (e.g. <c>{ a: ++i, b: await x, c: ++j }</c>) when evaluation suspends.
+/// Without preservation, the leading properties would re-evaluate on resume,
+/// doubling their side effects.
+/// </summary>
+internal sealed class ObjectExpressionSuspendData : SuspendData
+{
+    public ObjectInstance? Target { get; set; }
+
+    /// <summary>
+    /// Used by the fast-path builder, which accumulates into a separate
+    /// PropertyDictionary that's installed on Target at the end.
+    /// </summary>
+    public PropertyDictionary? FastProperties { get; set; }
+
+    public int NextIndex { get; set; }
+}
+
+/// <summary>
+/// Stores the partially-built template literal accumulator and next interpolation
+/// index. The accumulator includes the quasi text up to and including the one at
+/// <see cref="NextExpressionIndex"/> (which was appended just before the
+/// interpolation that suspended).
+/// </summary>
+internal sealed class TemplateLiteralSuspendData : SuspendData
+{
+    public System.Text.StringBuilder Accumulator { get; set; } = new();
+
+    public int NextExpressionIndex { get; set; }
+}
+
+/// <summary>
+/// Stores the resolved tag callable, this binding, and partially-evaluated
+/// arguments array for a tagged template expression. <c>Args[0]</c> is the
+/// template object; <c>Args[1..]</c> are the already-evaluated interpolation
+/// values up to (but not including) <see cref="NextExpressionIndex"/>.
+/// </summary>
+internal sealed class TaggedTemplateSuspendData : SuspendData
+{
+    public ICallable Tagger { get; set; } = null!;
+
+    public JsValue ThisObject { get; set; } = JsValue.Undefined;
+
+    public JsValue[] Args { get; set; } = [];
+
+    public int NextExpressionIndex { get; set; }
 }
 
 /// <summary>

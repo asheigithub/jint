@@ -496,6 +496,124 @@ public class GeneratorTests
     }
 
     [Fact]
+    public void ShouldNotReevaluateArrayLiteralElementsBeforeYield()
+    {
+        const string Script = """
+            (function () {
+                function* gen() {
+                    let i = 0;
+                    const a = [++i, ++i, yield ++i];
+                    return [a, i];
+                }
+                const g = gen();
+                g.next();
+                return JSON.stringify(g.next("done").value);
+            })()
+            """;
+
+        Assert.Equal("""[[1,2,"done"],3]""", _engine.Evaluate(Script));
+    }
+
+    [Fact]
+    public void ShouldNotReiterateOneShotSpreadIteratorAcrossYield()
+    {
+        const string Script = """
+            (function () {
+                function* inner() { yield "a"; yield "b"; yield "c"; }
+                function* outer() {
+                    const g = inner();
+                    const r = [...g, yield "wait"];
+                    return r;
+                }
+                const o = outer();
+                o.next();
+                return JSON.stringify(o.next("d").value);
+            })()
+            """;
+
+        Assert.Equal("""["a","b","c","d"]""", _engine.Evaluate(Script));
+    }
+
+    [Fact]
+    public void ShouldNotReevaluateTemplateLiteralInterpolationsBeforeYield()
+    {
+        const string Script = """
+            (function () {
+                function* gen() {
+                    let i = 0;
+                    const s = `${++i}-${yield "wait"}-${++i}`;
+                    return [s, i];
+                }
+                const g = gen();
+                g.next();
+                return JSON.stringify(g.next("X").value);
+            })()
+            """;
+
+        Assert.Equal("""["1-X-2",2]""", _engine.Evaluate(Script));
+    }
+
+    [Fact]
+    public void ShouldNotReevaluateObjectLiteralPropertiesBeforeYield()
+    {
+        const string Script = """
+            (function () {
+                function* gen() {
+                    let i = 0;
+                    const o = { a: ++i, b: ++i, c: yield ++i };
+                    return [o, i];
+                }
+                const g = gen();
+                g.next();
+                return JSON.stringify(g.next("done").value);
+            })()
+            """;
+
+        Assert.Equal("""[{"a":1,"b":2,"c":"done"},3]""", _engine.Evaluate(Script));
+    }
+
+    [Fact]
+    public void ShouldNotReevaluateMemberObjectAcrossPropertyYield()
+    {
+        const string Script = """
+            (function () {
+                function* gen() {
+                    let calls = 0;
+                    const obj = { val: 1 };
+                    const get = () => (calls++, obj);
+                    const v = get()[yield "wait"];
+                    return [v, calls];
+                }
+                const g = gen();
+                g.next();
+                return JSON.stringify(g.next("val").value);
+            })()
+            """;
+
+        Assert.Equal("[1,1]", _engine.Evaluate(Script));
+    }
+
+    [Fact]
+    public void ShouldNotReevaluateNullishCoalescingLeftOperandAfterYield()
+    {
+        const string Script = """
+            (function () {
+                function* gen() {
+                    let d = 0;
+                    const getNullish = () => (++d, null);
+                    const v = getNullish() ?? (yield "wait");
+                    return [d, v];
+                }
+                const g = gen();
+                g.next();
+                return JSON.stringify(g.next("done").value);
+            })()
+            """;
+
+        Assert.Equal("""[1,"done"]""", _engine.Evaluate(Script));
+    }
+
+    [Fact]
     public void ShouldResumeYieldInsideCatchInAsyncGenerator()
     {
         // Async generators share ISuspendable.Data with sync generators / async
